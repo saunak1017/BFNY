@@ -167,8 +167,9 @@ export class GameRoom {
     check(await this.one("SELECT id FROM media WHERE id=? AND team_id=? AND game_id=? AND kind='photo'",id,team,gameId),'Upload your team photo first.');
   }
   async snapshot(s){
-    const global=await this.one('SELECT podium_1,podium_2,podium_3 FROM settings WHERE id=1');
-    const data={me:{role:s.role,id:s.team_id,name:s.team?.name||'Game admin'},settings:s.game,serverTime:Date.now(),
+    const global=await this.one('SELECT podium_1,podium_2,podium_3,countdown FROM settings WHERE id=1');
+    const events=await this.all("SELECT id,action,detail FROM audit WHERE game_id=? AND action IN ('claim','steal','completed') AND rowid>COALESCE((SELECT MAX(rowid) FROM audit WHERE game_id=? AND action='game reset'),0) ORDER BY rowid DESC LIMIT 20",s.game_id,s.game_id);
+    const data={countdown:this.countdownMap(global.countdown)[s.game_id]||null,activity:events.map(e=>{const d=JSON.parse(e.detail);return {id:e.id,action:e.action,team:d.team,venue:d.venue,previousOwner:d.previousOwner};}),me:{role:s.role,id:s.team_id,name:s.team?.name||'Game admin'},settings:s.game,serverTime:Date.now(),
       podiumNames:[global.podium_1,global.podium_2,global.podium_3],challenges:CHALLENGES,googleKey:this.env.GOOGLE_MAPS_BROWSER_KEY||'',
       teams:await this.all("SELECT t.id,t.name,t.color,t.active,t.adjustment,COALESCE(SUM(CASE WHEN v.status='locked' THEN 2 WHEN v.owner IS NOT NULL THEN 1 ELSE 0 END),0)+t.adjustment AS score FROM teams t LEFT JOIN venues v ON v.game_id=t.game_id AND v.owner=t.id WHERE t.game_id=? GROUP BY t.id ORDER BY score DESC,t.name,t.id",s.game_id),
       venues:await this.all('SELECT * FROM venues WHERE game_id=? ORDER BY updated DESC,id',s.game_id),
@@ -183,16 +184,21 @@ export class GameRoom {
     return data;
   }
   async prepareTeam(b,gameId,merge=false){
-    check(text(b.name,60),'Provide a team name.');
+    check(b.name==null||(typeof b.name==='string'&&b.name.trim().length<=60),'Team names can be up to 60 characters.');
     const old=b.id?await this.one('SELECT * FROM teams WHERE id=? AND game_id=?',b.id,gameId):null;
     check(!b.id||old,'Team not found.',404);
+    let name=b.name?.trim()||(old&&b.name==null?old.name:'');
+    if(!name){
+      const names=new Set((await this.all('SELECT name FROM teams WHERE game_id=? AND id<>?',gameId,old?.id||'')).map(t=>t.name.toLowerCase()));
+      let number=1;while(names.has('team '+number))number++;name='Team '+number;
+    }
     const color=b.color||old?.color||'#9d2789';check(/^#[0-9a-fA-F]{6}$/.test(color),'Provide a valid team colour.');
     check(!b.passcode||(typeof b.passcode==='string'&&b.passcode.length>=6&&b.passcode.length<=128),'Team passcodes must be 6–128 characters.');
     check(old||b.passcode,'Set a passcode for the new team.');
-    const duplicate=await this.one('SELECT id FROM teams WHERE game_id=? AND name=? COLLATE NOCASE',gameId,b.name.trim());check(!duplicate||duplicate.id===old?.id,'That team name is already in use.');
+    const duplicate=await this.one('SELECT id FROM teams WHERE game_id=? AND name=? COLLATE NOCASE',gameId,name);check(!duplicate||duplicate.id===old?.id,'That team name is already in use.');
     const id=old?.id||uid(),hash=b.passcode?await passwordHash(b.passcode):old.password;
     const active=b.active===undefined?(old?.active??1):(b.active?1:0);
-    const ops=[this.q('INSERT INTO teams(id,game_id,name,color,password,active) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,color=excluded.color,password=excluded.password,active=excluded.active',id,gameId,b.name.trim(),color,hash,active)];
+    const ops=[this.q('INSERT INTO teams(id,game_id,name,color,password,active) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,color=excluded.color,password=excluded.password,active=excluded.active',id,gameId,name,color,hash,active)];
     if(b.members!==undefined){
       check(Array.isArray(b.members)&&b.members.length<=50&&b.members.every(n=>text(n,80)),'Enter up to 50 member names, each 1–80 characters.');
       const names=b.members.map(n=>n.trim());check(new Set(names.map(n=>n.toLowerCase())).size===names.length,'Member names must be unique within a team.');
@@ -202,13 +208,72 @@ export class GameRoom {
       }else ops.push(this.q('UPDATE members SET active=0 WHERE team_id=?',id));
       for(const name of names)ops.push(this.q('INSERT INTO members(id,game_id,team_id,name,active) VALUES(?,?,?,?,1) ON CONFLICT(team_id,name) DO UPDATE SET active=1,name=excluded.name',uid(),gameId,id,name));
     }
-    ops.push(this.audit('team updated',{id,name:b.name.trim(),members:b.members?.length},gameId));
+    ops.push(this.audit('team updated',{id,name,members:b.members?.length},gameId));
     const revoke=old&&(b.passcode||!active);
     if(revoke)ops.push(this.q('DELETE FROM sessions WHERE team_id=?',id));
     return {id,ops,revoke};
   }
+  countdownMap(raw){
+    if(!raw)return {};const data=JSON.parse(raw);
+    return data?.byGame||{default:data};
+  }
+  countdownValue(timers){return Object.keys(timers).length?JSON.stringify({byGame:timers}):null;}
   async admin(path,b,s){
     const gameId=s.game_id,g=s.game;
+    if(path==='/api/admin/countdown'){
+      const row=await this.one('SELECT countdown FROM settings WHERE id=1');
+      const timers=this.countdownMap(row.countdown);let timer=timers[gameId]||null;
+      const time=Date.now();
+      if(b.action==='save'||b.action==='start'){
+        check(text(b.label,100)&&text(b.address,400)&&Object.hasOwn(TRAIN_ROUTES,b.route),'Enter a destination label, address and train route.');
+        check(Number.isInteger(b.seconds)&&b.seconds>0&&b.seconds<=604800,'Choose a duration from 1 second to 7 days.');
+        timer={...timer,label:b.label.trim(),address:b.address.trim(),route:b.route,durationMs:b.seconds*1000};
+        if(b.action==='start')timer={...timer,status:'running',endsAt:time+b.seconds*1000,remainingMs:b.seconds*1000};
+        else if(!timer.status||timer.status==='idle')timer={...timer,status:'idle',remainingMs:b.seconds*1000,endsAt:null};
+      }else{
+        check(timer,'Configure a countdown first.',409);
+        if(b.action==='pause'){
+          check(timer.status==='running','The countdown is not running.',409);
+          timer={...timer,status:'paused',remainingMs:countdownRemaining(timer,time),endsAt:null};
+        }else if(b.action==='resume'){
+          check(timer.status==='paused'&&timer.remainingMs>0,'There is no paused time to resume.',409);
+          timer={...timer,status:'running',endsAt:time+timer.remainingMs};
+        }else if(b.action==='extend'){
+          check(timer.status!=='idle','Start the countdown before extending it.',409);
+          check(Number.isInteger(b.seconds)&&b.seconds>0&&b.seconds<=604800,'Enter a positive extension up to 7 days.');
+          const remaining=countdownRemaining(timer,time)+b.seconds*1000;
+          check(remaining<=604800000,'The countdown cannot exceed 7 days.');
+          timer={...timer,remainingMs:remaining,endsAt:timer.status==='running'?time+remaining:null};
+        }else if(b.action==='cancel')timer={...timer,status:'idle',endsAt:null,remainingMs:timer.durationMs};
+        else throw new Problem('Unknown countdown action.');
+      }
+      timers[gameId]=timer;await this.db.batch([this.q('UPDATE settings SET countdown=? WHERE id=1',this.countdownValue(timers)),this.audit('countdown '+b.action,{label:timer.label,route:timer.route},gameId)]);return;
+    }
+    if(path==='/api/admin/reset'){
+      check(b.confirmation==='RESET','Type RESET to confirm.');
+      const tokens=new Set((await this.all('SELECT token FROM sessions WHERE game_id=?',gameId)).map(s=>s.token));
+      const timers=this.countdownMap((await this.one('SELECT countdown FROM settings WHERE id=1')).countdown);delete timers[gameId];
+      await this.db.batch([
+        this.q('DELETE FROM drinks WHERE game_id=?',gameId),this.q('DELETE FROM attempts WHERE game_id=?',gameId),this.q('DELETE FROM venues WHERE game_id=?',gameId),
+        this.q("DELETE FROM media WHERE game_id=? AND kind<>'logo'",gameId),this.q('DELETE FROM sessions WHERE game_id=?',gameId),this.q('UPDATE teams SET adjustment=0 WHERE game_id=?',gameId),
+        this.q("UPDATE games SET phase='draft',started_at=NULL,timer_started_at=NULL,timer_elapsed_ms=0 WHERE id=?",gameId),
+        this.q('UPDATE settings SET countdown=? WHERE id=1',this.countdownValue(timers)),this.audit('game reset',{keptTeams:true},gameId)
+      ]);
+      for(const ws of this.ctx.getWebSockets())try{if(tokens.has(ws.deserializeAttachment()?.token))ws.close(4001,'Game reset. Sign in again.');}catch{}
+      return;
+    }
+    if(path==='/api/admin/remove-team'){
+      const t=await this.one('SELECT * FROM teams WHERE id=? AND game_id=?',b.id,gameId);check(t,'Team not found.',404);
+      check(b.confirmation===t.name,'Type the team name to confirm.');check(['delete','retire'].includes(b.action),'Choose delete or retire.');
+      if(b.action==='delete'){
+        const history=await this.one('SELECT id FROM attempts WHERE team_id=? LIMIT 1',t.id),owned=await this.one('SELECT id FROM venues WHERE owner=? LIMIT 1',t.id),media=await this.one('SELECT id FROM media WHERE team_id=? LIMIT 1',t.id);
+        check(!history&&!owned&&!media&&!t.adjustment,'This team has gameplay history. Retire it, or reset this game before deleting it.',409);
+      }
+      const ops=[this.q('DELETE FROM sessions WHERE team_id=?',t.id)];
+      if(b.action==='delete')ops.push(this.q('DELETE FROM members WHERE team_id=?',t.id),this.q('DELETE FROM teams WHERE id=?',t.id));
+      else ops.push(this.q('UPDATE teams SET active=0 WHERE id=?',t.id));
+      ops.push(this.audit(b.action==='delete'?'team deleted':'team retired',{id:t.id,name:t.name},gameId));await this.db.batch(ops);this.closeTeamSockets(t.id);return;
+    }
     if(path==='/api/admin/game'){
       check(text(b.name,80),'Enter a game name (up to 80 characters).');const id=uid();
       await this.db.batch([this.q("INSERT INTO games(id,name,phase,created) VALUES(?,?,'draft',?)",id,b.name.trim(),now()),this.q('UPDATE sessions SET game_id=? WHERE token=?',id,s.token),this.audit('game created',{name:b.name.trim()},id)]);return;
