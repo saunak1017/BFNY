@@ -1,3 +1,4 @@
+import {TRAIN_ROUTES,countdownRemaining} from '../public/game-ui.js';
 import { CHALLENGES } from './challenges.js';
 const now = () => new Date().toISOString();
 const uid = () => crypto.randomUUID();

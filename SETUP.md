@@ -174,7 +174,7 @@ Choose Git-connected or direct upload for the initial project; do not assume an 
 
 ## 7. Configure Google venue search
 
-The website uses Google's **Place Autocomplete (New)** widget with Place Details through the JavaScript library. It shows venue names/addresses; it links out to Google Maps for directions. It does not need a map canvas, Map ID, Directions API, Geocoding API, or device location permission.
+The website uses Google's **Place Autocomplete (New)** widget with Place Details through the JavaScript library. It shows venue names/addresses; it links out to Google Maps for directions. The scoreboard also uses a map canvas and Places locations to show claimed bars in team colors. It does not need a Map ID, Directions API, Geocoding API, or device location permission. Map loads and Places lookups may incur Google charges.
 
 In Google Cloud Console, open the project holding your API key:
 

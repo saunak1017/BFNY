@@ -13,6 +13,11 @@ Integration coverage includes one pending outcome across team devices; simultane
 
 The browser smoke test uses real sessions, SQL, backend handlers, image processing and live WebSocket invalidations through a local Durable Object adapter. It checks roster import/editing, a stale claim form on a second device, the reporting popup, outcomes, live individual standings, podium defaults/nicknames, lobby/start controls, clock pause/resume, saved drafts and responsive layout. Google venue lookup is substituted with a test widget. The test never contacts the production game.
 
+Additional checks for map and game management:
+
+- Reset and team deletion/retirement integration tests cover admin permissions, confirmation, session revocation, preserved teams/logo, protected history and fresh gameplay after reset.
+- A mobile Chromium check with simulated Google Maps/Places responses verified coordinate lookup, pin color changes, preserved map view/filter, removed pins, headings, reset and retirement dialogs. This does not validate the real Google key, billing or referrer settings.
+
 Limits:
 
 - Production Cloudflare data has not been migrated or deployed by this change. Apply the migration and deploy the Worker/frontend together using the upgrade steps in `SETUP.md`.

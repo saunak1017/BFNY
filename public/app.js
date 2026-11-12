@@ -39,7 +39,15 @@ else if(page==='scoreboard'){main.innerHTML=hero('The battle so far','City stand
 else if(page==='feed'){main.innerHTML=`<div class="feed">${hero('From the streets','The city feed.','Every claim. Every challenge. Every steal.')}<div id="feed-list">${feedHTML()}</div></div>`;}
 else if(page==='rules'){main.innerHTML=hero('Know the game','How we play.','Your pocket guide to Battle for New York.')+`<section class="panel"><h2>The website rules</h2><div class="stack"><p><strong>Claim:</strong> finish the required drinks, choose the venue and upload a team photo. A successful claim earns one point.</p><p><strong>Lock:</strong> select the challenge you physically drew and mark it completed. Locking adds one more point and protects the bar. A locked bar is worth two points.</p><p><strong>Fail or veto:</strong> record the card and outcome. You keep the point, but the bar opens to steals. Your team cannot retry.</p><p><strong>Steal:</strong> start an attempt at an open bar with a team photo. Complete your challenge to transfer ownership and lock the bar for two points. Steals are only available after the owner fails or vetoes. If you fail, the old owner keeps it. First successful lock wins.</p><p><strong>Timing:</strong> the admin opens the lobby separately from starting the game clock. Claims and outcomes are enabled only during play. Individual challenge timing and curses are managed outside the website.</p><p><strong>Connection:</strong> wait for a success message before assuming a claim or lock is recorded. Claims require an internet connection.</p></div></section><details class="panel"><summary>Original rules & how-to-play</summary><img class="rules-img" src="/rules/rules.png" alt="Battle for New York original rules"><img class="rules-img" src="/rules/how-to-play.png" alt="Battle for New York how to play"></details>`;}
 else if(page==='admin')renderAdmin();}
-function renderPlayList(){const score=$('.hero-number');if(score)score.innerHTML=`${team(state.me.id)?.score||0}<span>Points</span>`;if($('#phase-notice'))$('#phase-notice').innerHTML=phaseNotice();const mine=state.attempts.filter(a=>a.team_id===state.me.id),pending=mine.filter(a=>a.status==='pending');$('#play-list').innerHTML=`<div class="section-label"><h2>Your active stops</h2>${badge('pending',`${pending.length} active`)}</div>${pending.map(a=>attemptHTML(a)).join('')||'<div class="empty"><strong>No active challenges</strong>Search for a bar above to get started.</div>'}<div class="section-label"><h2>Open to steal</h2></div>${state.venues.filter(v=>v.status==='open'&&v.owner!==state.me.id&&!mine.some(a=>a.venue_id===v.id)).map(v=>venueHTML(v,true)).join('')||'<p class="muted">No eligible bars right now.</p>'}<div class="section-label"><h2>Your previous stops</h2></div>${mine.filter(a=>a.status!=='pending').map(a=>attemptHTML(a)).join('')||'<p class="muted">Your finished attempts will appear here.</p>'}`;}
+function refreshScoreboard(){
+ const mapPanel=$('#territory-map').closest('section'), saved=territory,oldTicker=$('#activity-ticker');
+ mapPanel.remove();preservingMap=true;renderPage();preservingMap=false;
+ const placeholder=$('#territory-map').closest('section');placeholder.replaceWith(mapPanel);
+ const summary=mapPanel.querySelector('.territory-summary');if(summary)summary.outerHTML=territorySummary();
+ const newTicker=$('#activity-ticker');if(oldTicker&&newTicker&&oldTicker.dataset.signature===newTicker.dataset.signature)newTicker.replaceWith(oldTicker);
+ territory=saved;syncTerritoryMap();
+}
+function renderPlayList(){renderCountdown();const score=$('.hero-number');if(score)score.innerHTML=`${team(state.me.id)?.score||0}<span>Points</span>`;if($('#phase-notice'))$('#phase-notice').innerHTML=phaseNotice();const mine=state.attempts.filter(a=>a.team_id===state.me.id),pending=mine.filter(a=>a.status==='pending');$('#play-list').innerHTML=`<div class="section-label"><h2>Your Active Stops</h2>${badge('pending',`${pending.length} active`)}</div>${pending.map(a=>attemptHTML(a)).join('')||'<div class="empty"><strong>No active challenges</strong>Search for a bar above to get started.</div>'}<div class="section-label"><h2>Open to Steal</h2></div>${state.venues.filter(v=>v.status==='open'&&v.owner!==state.me.id&&!mine.some(a=>a.venue_id===v.id)).map(v=>venueHTML(v,true)).join('')||'<p class="muted">No eligible bars right now.</p>'}<div class="section-label"><h2>Your Previous Stops</h2></div>${mine.filter(a=>a.status!=='pending').map(a=>attemptHTML(a)).join('')||'<p class="muted">Your finished attempts will appear here.</p>'}`;}
 function attemptHTML(a){const v=venue(a.venue_id);return `<article class="venue"><div class="row between"><h3>${esc(v?.name)}</h3>${badge(a.status,a.status==='pending'?(a.kind==='steal'?'Steal in progress':'Challenge pending'):a.status)}</div><p class="muted small">${esc(v?.address)}</p>${a.challenge?`<p class="small">#${a.challenge} · ${esc(challenge(a.challenge)?.name)}</p>`:''}${a.status==='pending'&&state.settings.phase==='live'?`<button class="primary full" data-action="outcome" data-id="${a.id}">Record challenge outcome →</button>`:`<p class="small muted">Current owner: ${tag(v?.owner)} · ${esc(v?.status)}</p>`}</article>`;}
 function venueHTML(v,steal=false){return `<article class="venue"><div class="row between"><h3>${esc(v.name)}</h3>${badge(v.status,v.status==='open'?'Open to steal':v.status)}</div><p class="muted small">${esc(v.address)}</p><div class="row between wrap">${tag(v.owner)}<a class="small" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name)}&query_place_id=${encodeURIComponent(v.id)}" target="_blank" rel="noopener noreferrer">Directions ↗</a></div>${steal&&state.me.role==='team'&&state.settings.phase==='live'?`<button class="primary full" style="margin-top:15px" data-action="steal" data-id="${esc(v.id)}">Start a steal →</button>`:''}</article>`;}
 function renderVenues(){const q=$('#venue-filter').value.toLowerCase();$('#venue-list').innerHTML=state.venues.filter(v=>`${v.name} ${v.address} ${team(v.owner)?.name||''}`.toLowerCase().includes(q)).map(v=>venueHTML(v)).join('')||'<div class="empty">No bars found.</div>';}
@@ -103,12 +111,19 @@ document.addEventListener('click',async e=>{const el=e.target.closest('[data-act
  case 'close':modal.close();break;
  case 'refresh-login':await loginScreen();break;
  case 'switch-login':adminLogin=!adminLogin;await loginScreen();break;
- case 'logout':await api('logout',{});state=null;disconnect();await loginScreen();break;
+ case 'logout':await api('logout',{});state=null;selectedTeam=null;disconnect();await loginScreen();break;
  case 'claim-selected':if(selectedPlace)claimDialog(selectedPlace);break;
  case 'steal':{const v=venue(id);claimDialog({placeId:v.id,name:v.name,address:v.address});break;}
  case 'outcome':outcomeDialog(id);break;
  case 'card':{const c=challenge(id);showModal(`#${c.id} · ${c.name}`,`<img class="card-display" src="${c.image}" alt="${esc(c.name)}">`);break;}
  case 'more-feed':visibleFeed+=20;$('#feed-list').innerHTML=feedHTML();break;
+ case 'select-team':selectedTeam=id||null;if(territory)territory.fitted=false;refreshScoreboard();break;
+ case 'toggle-ticker':tickerPaused=!tickerPaused;$('#activity-ticker').classList.toggle('ticker-paused',tickerPaused);el.textContent=tickerPaused?'Resume ticker':'Pause ticker';el.setAttribute('aria-pressed',String(tickerPaused));break;
+ case 'countdown':countdownDialog();break;
+ case 'timer-action':if(id==='extend')extendCountdownDialog();else {await api('admin/countdown',{action:id});modal.close();await refresh();}break;
+ case 'fit-map':fitTerritory();break;
+ case 'reset-game':resetDialog();break;
+ case 'remove-team':removeTeamDialog(id);break;
  case 'settings':settingsDialog();break;
  case 'new-game':newGameDialog();break;
  case 'podium-names':podiumDialog();break;
@@ -125,3 +140,68 @@ document.addEventListener('click',async e=>{const el=e.target.closest('[data-act
 modal.addEventListener('close',()=>{const p=$('#photo-preview');if(p?.dataset.object)URL.revokeObjectURL(p.dataset.object);if(state)refresh();});
 async function start(){try{boot=await api('bootstrap');try{setState(await api('state'));}catch(e){if(e.status!==401)throw e;}if(state){page=state.me.role==='admin'?'admin':'play';header();renderPage();connect();}else await loginScreen();}catch(e){$('#main').innerHTML=`<section class="panel"><h2>Couldn’t connect</h2><p class="error">${esc(e.message)}</p><p class="muted">If this is a new deployment, finish the D1 migration, Worker secrets, and GAME service binding in SETUP.md.</p><button id="retry" style="margin-top:15px">Try again</button></section>`;$('#retry').onclick=start;}}
 start();
+
+function resetDialog(){showModal('Reset Game',`<form><p>This clears all bar ownership, attempts, gameplay photos, sessions and score adjustments, then returns the game to Setup. Teams, passcodes, colors and your logo stay. Everyone, including you, must sign in again.</p><p class="info">The audit history is retained. Removed photos become inaccessible through the app; stored files remain for recovery.</p><label for="reset-confirm">Type RESET to confirm</label><input id="reset-confirm" required pattern="RESET" autocomplete="off">${formEnd('Reset Game')}`);bindForm(async()=>{await api('admin/reset',{confirmation:$('#reset-confirm').value});state=null;selectedTeam=null;disconnect();await loginScreen();});}
+function removeTeamDialog(id){const t=team(id);showModal('Remove team',`<form><p><strong>${esc(t.name)}</strong></p><p>Delete permanently if this team has no gameplay history. Otherwise retire it to disable sign-in and preserve its scores, bars and feed. Retired teams can be re-enabled using Edit.</p><label for="team-removal">Action</label><select id="team-removal"><option value="delete">Delete unused team</option><option value="retire">Retire team</option></select><label for="team-confirm">Type the team name to confirm</label><input id="team-confirm" required autocomplete="off">${formEnd('Confirm')}`);bindForm(()=>api('admin/remove-team',{id,action:$('#team-removal').value,confirmation:$('#team-confirm').value}));}
+const placeLocations=new Map(), locationRequests=new Map();
+let territory=null;
+async function placeLocation(id){
+ if(placeLocations.has(id))return placeLocations.get(id);
+ if(!locationRequests.has(id))locationRequests.set(id,(async()=>{const p=new google.maps.places.Place({id});await p.fetchFields({fields:['location']});if(!p.location)throw new Error('No location returned');const location=p.location.toJSON();placeLocations.set(id,location);return location;})().finally(()=>locationRequests.delete(id)));
+ return locationRequests.get(id);
+}
+async function initTerritoryMap(){
+ const host=$('#territory-map');territory=null;
+ try{await loadGoogle();const [{Map},{Marker}]=await Promise.all([google.maps.importLibrary('maps'),google.maps.importLibrary('marker')]);if(!host.isConnected)return;
+ territory={host,Marker,map:new Map(host,{center:{lat:40.74,lng:-73.98},zoom:12,mapTypeControl:false,streetViewControl:false,gestureHandling:'cooperative'}),markers:new window.Map(),info:new google.maps.InfoWindow(),fitted:false,generation:0};
+ await syncTerritoryMap();
+ }catch(e){if(host.isConnected)$('#map-status').textContent='Map unavailable: '+e.message+' You can still use the bar list below.';}
+}
+function fitTerritory(){if(!territory)return;const bounds=new google.maps.LatLngBounds();for(const marker of territory.markers.values())bounds.extend(marker.getPosition());if(!bounds.isEmpty()){territory.map.fitBounds(bounds,40);if(territory.markers.size===1)territory.map.setZoom(15);}}
+async function syncTerritoryMap(){
+ const current=territory;if(!current||!current.host.isConnected)return;const generation=++current.generation;current.info.close();
+ const venues=state.venues.filter(v=>v.owner&&(!selectedTeam||v.owner===selectedTeam)),ids=new Set(venues.map(v=>v.id));
+ for(const [id,marker] of current.markers)if(!ids.has(id)){marker.setMap(null);current.markers.delete(id);current.info.close();}
+ let failed=0,index=0;
+ // Limit concurrent Places lookups for older bars whose coordinates are not yet cached.
+ async function next(){while(index<venues.length){const v=venues[index++];try{const position=await placeLocation(v.id);if(territory!==current||generation!==current.generation||!current.host.isConnected)return;
+ const owner=team(v.owner),color=/^#[0-9a-f]{6}$/i.test(owner?.color)?owner.color:'#999999';
+ let marker=current.markers.get(v.id);if(!marker){marker=new current.Marker({map:current.map,position});current.markers.set(v.id,marker);marker.addListener('click',()=>{const latest=venue(v.id);if(!latest)return;const content=document.createElement('div');content.className='map-info';content.innerHTML=venueHTML(latest);current.info.setContent(content);current.info.open({map:current.map,anchor:marker});});}
+ marker.setOptions({position,title:v.name+' — '+(owner?.name||'Unclaimed'),icon:{path:google.maps.SymbolPath.CIRCLE,scale:11,fillColor:color,fillOpacity:1,strokeColor:'#202124',strokeWeight:2}});
+ }catch{failed++;}}}
+ await Promise.all([next(),next(),next()]);if(territory!==current||generation!==current.generation||!current.host.isConnected)return;
+ $('#map-status').textContent=!venues.length?'Claimed bars will appear here.':failed?`${failed} bar location(s) could not load. Check Google Places access; the full list is below.`:`${venues.length} claimed bar${venues.length===1?'':'s'} · Colors follow current ownership.`;
+ if(!current.fitted&&current.markers.size){fitTerritory();current.fitted=true;}
+}
+
+function territorySummary(){
+ const venues=state.venues.filter(v=>v.owner&&(!selectedTeam||v.owner===selectedTeam));
+ return `<div class="territory-summary"><div class="row between wrap"><h3>${selectedTeam?tag(selectedTeam):'All Teams'}</h3><button class="ghost" data-action="select-team" aria-pressed="${!selectedTeam}">All Teams</button></div><dl class="territory-counts">${[['Total Owned',venues.length],['Locked',venues.filter(v=>v.status==='locked').length],['Open to Steal',venues.filter(v=>v.status==='open').length],['Challenge Pending',venues.filter(v=>v.status==='claimed').length]].map(([label,count])=>`<div><dt>${label}</dt><dd>${count}</dd></div>`).join('')}</dl></div>`;
+}
+function activityTicker(){
+ const events=(state.activity||[]).filter(e=>team(e.team)&&venue(e.venue));
+ const content=events.map(e=>{const name=esc(venue(e.venue).name);let message;
+ if(e.action==='completed')message=e.previousOwner&&e.previousOwner!==e.team?`stole ${name} from ${tag(e.previousOwner)}`:`locked ${name}`;
+ else message=e.action==='steal'?`started a steal at ${name}`:`claimed ${name}`;
+ return `<span class="ticker-item">${tag(e.team)} ${message}<span class="ticker-divider" aria-hidden="true">◆</span></span>`;}).join('')||'<span class="ticker-item">The city is quiet. Claims, locks and steals will appear here.</span>';
+ return `<section id="activity-ticker" class="activity-ticker ${tickerPaused?'ticker-paused':''}" data-signature="${esc(events.map(e=>JSON.stringify(e)+team(e.team)?.name+team(e.team)?.color+venue(e.venue)?.name).join('|'))}" aria-label="Recent game activity"><div class="ticker-heading"><strong>LIVE FROM NYC</strong><button class="ghost" data-action="toggle-ticker" aria-pressed="${tickerPaused}">${tickerPaused?'Resume ticker':'Pause ticker'}</button></div><div class="ticker-window" tabindex="0" aria-label="Recent activity; pause the ticker to read at your own pace"><div class="ticker-track" style="--ticker-duration:${Math.max(24,events.length*9)}s"><div class="ticker-copy">${content}</div><div class="ticker-copy" aria-hidden="true">${content}</div></div></div></section>`;
+}
+function serverNow(){return clockServer+performance.now()-clockAt;}
+function renderCountdown(){
+ const host=$('#countdown-slot');if(!host)return;const timer=state?.countdown;
+ if(!timer||timer.status==='idle'){host.innerHTML='';return;}
+ const color=TRAIN_ROUTES[timer.route]||'#808183',dark=['N','Q','R','W','L','S'].includes(timer.route);
+ host.innerHTML=`<section class="final-stop"><div class="arrival-board" id="arrival-board"><span class="arrival-arrow" aria-hidden="true">➜</span><span class="train-badge" style="background:${color};color:${dark?'#111':'#fff'}" aria-label="Train ${esc(timer.route)}">${esc(timer.route)}</span><div class="arrival-destination"><span class="arrival-caption">FINAL STOP${timer.status==='paused'?' · PAUSED':''}</span><strong>${esc(timer.label)}</strong></div><div class="arrival-time"><span id="countdown-value" role="timer" aria-label="Time remaining"></span><span class="arrival-caption">HOURS : MIN : SEC</span></div></div><div class="final-address"><span>${esc(timer.address)}</span><a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(timer.address)}" target="_blank" rel="noopener noreferrer">Directions ↗</a></div></section>`;
+ updateCountdown();
+}
+function updateCountdown(){const timer=state?.countdown,value=$('#countdown-value');if(!value||!timer)return;const remaining=countdownRemaining(timer,serverNow());value.textContent=formatCountdown(remaining);$('#arrival-board').classList.toggle('last-call',remaining<=600000);}
+setInterval(updateCountdown,250);
+function countdownDialog(){
+ const timer=state.countdown,seconds=Math.floor((timer?.durationMs||3600000)/1000);
+ showModal('Countdown & final stop',`<form><p class="info">The countdown is independent of game status. At zero it stays at 00:00:00 and does not end the game.</p><div class="duration-fields"><label>Hours<input name="hours" type="number" min="0" max="168" step="1" value="${Math.floor(seconds/3600)}" required></label><label>Minutes<input name="minutes" type="number" min="0" max="59" step="1" value="${Math.floor(seconds/60)%60}" required></label><label>Seconds<input name="seconds" type="number" min="0" max="59" step="1" value="${seconds%60}" required></label></div><label for="final-label">Destination label</label><input id="final-label" name="label" maxlength="100" value="${esc(timer?.label||'The Final Stop')}" required><label for="final-address">Address</label><input id="final-address" name="address" maxlength="400" value="${esc(timer?.address||'')}" required><label for="final-route">Train route</label><select id="final-route" name="route">${options(Object.keys(TRAIN_ROUTES).map(route=>[route,route+' train']),timer?.route||'R')}</select><p class="info">Save prepares the destination without starting a new countdown. Saving during a countdown updates the destination; its time stays unchanged. Start begins a fresh countdown with the entered duration.</p><button type="submit" class="positive full" name="action" value="start">${timer&&timer.status!=='idle'?'Restart':'Start'} Countdown</button>${formEnd('Save destination')}`);
+ bindForm(data=>api('admin/countdown',{action:data.get('action')||'save',seconds:Number(data.get('hours'))*3600+Number(data.get('minutes'))*60+Number(data.get('seconds')),label:data.get('label'),address:data.get('address'),route:data.get('route')}));
+ if(timer&&timer.status!=='idle'){
+ const controls=document.createElement('div');controls.className='row wrap timer-controls';controls.innerHTML=`<p class="info">${timer.status==='paused'?'Paused':'Running'} · ${formatCountdown(countdownRemaining(timer,serverNow()))}</p><button data-action="timer-action" data-id="${timer.status==='paused'?'resume':'pause'}">${timer.status==='paused'?'Resume':'Pause'}</button><button data-action="timer-action" data-id="extend">Extend</button><button class="danger" data-action="timer-action" data-id="cancel">Cancel countdown</button>`;$('#modal-body').append(controls);
+ }
+}
+function extendCountdownDialog(){modal.close();showModal('Extend countdown',`<form><label for="extension-minutes">Minutes to add</label><input id="extension-minutes" name="minutes" type="number" min="1" max="10080" step="1" value="10" required>${formEnd('Add time')}`);bindForm(data=>api('admin/countdown',{action:'extend',seconds:Number(data.get('minutes'))*60}));}
