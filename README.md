@@ -46,7 +46,7 @@ npm run check
 npm test
 ```
 
-The test suite exercises the actual backend handlers and SQL using Node's SQLite adapter and in-memory media storage. The 18 tests cover claim races across devices, competing steals, lock idempotency, two-point scoring, roster CSV parsing/import, drink deduplication, game isolation, draft/lobby gates, clock pause/resume, global podium defaults, a populated database upgrade, permissions, CSRF, media access, passcode rotation and admin corrections. Wrangler 4.151.1 was used for packaging checks; see `VALIDATION.md` for limits.
+The test suite exercises the actual backend handlers and SQL using Node's SQLite adapter and in-memory media storage. The 26 tests cover claim races across devices, competing steals, lock idempotency, two-point scoring, roster CSV parsing/import, drink deduplication, game isolation, draft/lobby gates, clock pause/resume, global podium defaults, a populated database upgrade, permissions, CSRF, media access, passcode rotation and admin corrections. Wrangler 4.151.1 was used for packaging checks; see `VALIDATION.md` for limits.
 
 Do not edit the database directly during a live game; admin actions maintain the ownership/attempt relationships and emit live updates. The audit log records corrections, including the previous venue state. Use a separate saved game for rehearsal if you want a clean event history.
 
@@ -63,3 +63,13 @@ For an installed system Chromium, set `CHROMIUM_EXECUTABLE_PATH` to its path. Se
 ## Upgrading an existing installation
 
 Apply `migrations/0002_games_rosters_drinks.sql` through Wrangler before deploying the updated backend. It preserves the existing event as the first saved game, including passcodes, sessions, venue history, photos and adjustments. Existing locked bars become worth two points. See the upgrade steps in `SETUP.md`.
+
+## Scoreboard and team editor
+
+The scoreboard includes the live territory map, clickable team filters, venue details, territory counts and activity ticker alongside individual drink standings. Live updates retain the map viewport and update marker ownership/colours. If Google Maps cannot load, the venue list remains available.
+
+Create teams directly in Admin: pick a colour with the wheel or hue/saturation/brightness sliders, add members individually, and set a team passcode. Team names are optional; a blank name receives the next available Team number within that saved game. CSV import remains optional. Removing a member preserves recorded drink history.
+
+The subway final-stop countdown, team deletion/retirement and game reset controls are restored. A reset affects only the selected game and requires typing RESET; it retains the teams, rosters, codes and logo. Countdown state is isolated by game using the existing countdown field, with legacy countdown data still readable.
+
+This update changes application code only. No new D1 migration, secret or binding is required after the existing game/roster migration has been completed. Merge into the original deployment repository and let the existing Worker and Pages builds deploy the code.

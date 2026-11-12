@@ -212,7 +212,7 @@ To check Google search, create a rehearsal draft and a team in Admin, enable its
 ## 8. Prepare drafts, add rosters, open the lobby, and start the timer
 
 1. Sign in as admin. **Saved games** selects the event you are managing; **+ New draft** creates another game with separate teams, rosters and history. The first migrated game is named **Battle for New York**.
-2. **Create team** → enter a name, colour, passcode of at least 6 characters, and member names (one per line, up to 50). Several teammates can use the shared login at once.
+2. **Create team** → optionally enter a name (otherwise Team 1, Team 2, etc.), choose a colour using the wheel or sliders, enter a passcode of at least 6 characters, and add members using the individual fields (up to 50). Several teammates can use the shared login at once.
 3. Alternatively, **Import teams & members** accepts an uploaded CSV or pasted CSV. Preview it, then click **Import roster**. The import adds members to existing teams; edit a team to remove members. Required columns are `team,member`; optional columns are `color,passcode`. New teams need a passcode. Existing teams keep their colour/passcode when those fields are blank. A supplied passcode replaces the existing one and signs out that team's devices. Import validation is atomic: an invalid row saves nothing.
 
 ```csv
@@ -236,7 +236,16 @@ No curse UI, automatic challenge draw, individual challenge timing enforcement o
 
 ## Updating an existing installation
 
-This release changes the database schema. Pause the current game before upgrading, then keep team submissions closed until the Worker and Pages frontend both use the new code.
+For the **map and team-editor update**, the database schema is unchanged. If your game/roster migration is already complete, deploy the new code through your existing Cloudflare Git connections:
+
+1. Merge the PR into **saunakshah17/BFNY → main**. The working branch can live in the saunak1017 fork; Cloudflare continues watching the original repository.
+2. In Cloudflare, check **bfny-game → Settings → Builds**: repository `saunakshah17/BFNY`, branch `main`, repository root `/`, blank build command, deploy command `npx wrangler@4.151.1 deploy --config worker/wrangler.jsonc`. This is a Cloudflare build field; no local terminal is needed.
+3. Check that both **Workers Builds: bfny-game** and **Cloudflare Pages** succeed for the merged commit. The existing Pages build continues using the `public` output directory and its `GAME` service binding.
+4. Reload the website. This update needs no D1 console SQL, secret rotation, or binding changes.
+
+The commands below are for the **earlier game/roster schema upgrade only**, if it has never been completed. Do not rerun that migration for the map/team-editor update.
+
+The earlier game/roster release changes the database schema. Pause the current game before upgrading, then keep team submissions closed until the Worker and Pages frontend both use the new code.
 
 ```sh
 npx wrangler@4.151.1 d1 migrations apply DB --remote --config worker/wrangler.jsonc
@@ -261,7 +270,7 @@ Venue corrections supersede pending competing attempts. Correcting a failed atte
 
 **Adjust a score** sets a team's total manual offset; it does not add the entered value repeatedly. Example: entering `-1` means bar points (owned bars plus lock bonuses) minus one; returning it to `0` removes the adjustment. A reason is required.
 
-The recent history section shows the last 100 actions/corrections; the database retains the full audit table. There is no destructive reset button. For a clean rehearsal, create a separate saved game, or undo test claims before the real game (history remains).
+The recent history section shows the last 100 actions/corrections; the database retains the full audit table. **Reset this game** requires typing RESET and clears gameplay only in the selected game while retaining its teams, rosters, passcodes and logo. Other saved games are unaffected. Use a separate saved game for rehearsal.
 
 ## 10. Test before the event
 
