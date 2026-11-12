@@ -18,7 +18,7 @@ Place files here:
 
 **All 36 PNGs from your ZIP are already included.** You only need to add your logo or replace a card you change. Keep filenames as numbers and lowercase `.png`; Cloudflare paths are case-sensitive. Do not rename images to challenge names. Do not put them in an extra `Copy of BFNY` subfolder.
 
-The logo is optional. Transparent PNG looks best on the dark header. The website falls back to its NY text logo if the file is missing. You can also upload a logo later under **Admin → Game & logo settings**. That upload overrides `logo.png`; use the “project folder” checkbox there to revert.
+The logo is optional. Transparent PNG looks best on the dark header. The website falls back to its NY text logo if the file is missing. You can also upload a logo later under **Admin → Game & logo settings**. That upload overrides `logo.png`; use the “default website logo” checkbox there to revert.
 
 The mapping is in `worker/challenges.js` and listed in `CARD_INDEX.md`. If you only replace the image with an updated design for the same challenge, no mapping change is necessary. If you change its title, update the mapping and redeploy the Worker.
 
@@ -77,7 +77,7 @@ Now create the tables in the remote database:
 npx wrangler@4.151.1 d1 migrations apply bfny --remote --config worker/wrangler.jsonc
 ```
 
-Approve applying the migration if prompted. You should see `0001_initial.sql` applied successfully. The game starts in **Setup** mode, with no teams. The migration can be checked/re-run safely; Wrangler tracks which migrations have already been applied.
+Approve applying the migration if prompted. You should see `0001_initial.sql` and `0002_games_rosters_drinks.sql` applied successfully. The first game starts as an admin-only **Draft**, with no teams. The migration can be checked/re-run safely; Wrangler tracks which migrations have already been applied.
 
 You can also find the database in Cloudflare → **Storage & databases → D1 → bfny**. If your dashboard groups these differently, search for D1.
 
@@ -207,21 +207,43 @@ npx wrangler@4.151.1 deploy --config worker/wrangler.jsonc
 
 A normal deploy preserves the runtime `ADMIN_PASSWORD` secret. Commit this updated configuration if using Git; it contains the restricted browser key, not an unrestricted server key. Alternatively you can manage the browser key as a Worker secret via `wrangler secret put GOOGLE_MAPS_BROWSER_KEY` after removing it from `vars`, but the key will still be visible to signed-in browsers by design.
 
-Refresh the website. Create a team in Admin, sign into that team in a separate private/incognito window, and check that Google search works. Search is biased toward NYC but permits US venues elsewhere. The server uses the selected Google place ID to distinguish venues/branches.
+To check Google search, create a rehearsal draft and a team in Admin, enable its lobby, then sign into that team in a separate private/incognito window. Search is biased toward NYC but permits US venues elsewhere. The server uses the selected Google place ID to distinguish venues/branches.
 
-## 8. Create teams, set the logo, start the game
+## 8. Prepare drafts, add rosters, open the lobby, and start the timer
 
-1. Sign in as admin.
-2. **Create team** → enter its name, colour and a passcode of at least 6 characters.
-3. Repeat for each team. Several teammates can use the same team login at once.
-4. **Game & logo settings** → upload your logo if you did not put `logo.png` in the project folder.
-5. Keep status **Setup** until ready. Teams may sign in and browse, but cannot submit.
-6. Change status to **Live** and save when the game starts.
-7. To freeze submissions temporarily choose **Paused**. To finish choose **Ended**. Both preserve the feed and scoreboard, and can be changed back by admin.
+1. Sign in as admin. **Saved games** selects the event you are managing; **+ New draft** creates another game with separate teams, rosters and history. The first migrated game is named **Battle for New York**.
+2. **Create team** → enter a name, colour, passcode of at least 6 characters, and member names (one per line, up to 50). Several teammates can use the shared login at once.
+3. Alternatively, **Import teams & members** accepts an uploaded CSV or pasted CSV. Preview it, then click **Import roster**. The import adds members to existing teams; edit a team to remove members. Required columns are `team,member`; optional columns are `color,passcode`. New teams need a passcode. Existing teams keep their colour/passcode when those fields are blank. A supplied passcode replaces the existing one and signs out that team's devices. Import validation is atomic: an invalid row saves nothing.
 
-Provide teams the production website URL, team name and their passcode. Team passwords are stored as salted PBKDF2 hashes. The admin can replace a passcode but cannot read it back. Changing a team's passcode or disabling its login invalidates that team's current sessions.
+```csv
+team,member,color,passcode
+Queens,Alex,#9d2789,queens-code
+Queens,Sam,,
+Mets,Jordan,#e4393a,mets-code
+```
 
-No curse UI, automatic challenge draw, timing enforcement or GPS proof is included. Teams physically draw their cards, manage timing, then use the website to report outcomes. The site relies on team honesty and admin correction for venue choice and claiming requirements.
+4. **Game & logo settings** lets you rename this game and upload its logo. Changes are saved while the draft is closed to team logins. You can leave and return later.
+5. **Podium nicknames** sets the three drinkers' podium defaults for **every game**, including future drafts. Defaults are `1`, `2`, `3`; blank fields restore those numbers. Equal drink counts share a rank and nickname.
+6. Click **Enable game** when ready for team logins. This opens the **Lobby**. Teams can browse the scoreboard/feed but cannot claim or report outcomes; the clock still says **Not started**.
+7. Independently click **Start timer & play** to start the elapsed game clock and enable claims/outcomes. The clock counts up; it is not a countdown or an individual challenge timer.
+8. **Pause game & timer** freezes the clock and team submissions. **Resume game & timer** continues accumulated time. **End game** freezes the results and clock. **Reopen & resume timer** continues the same event if needed, without resetting time or scores.
+
+Provide teams the production URL, enabled game name, team name and passcode. Passwords are salted PBKDF2 hashes; the admin can replace but cannot read them back. Drafts are omitted from the team login screen. Use **Refresh available games** if someone opened the page before you enabled the lobby.
+
+When claiming or starting a steal, a team checks the members who had a drink. Each selected person records **one drink at that bar**, counted once. Drinks persist through failure/veto, a failed or lost steal, and later ownership transfers. Removed roster members keep recorded drink history. Undoing an accidental venue claim removes its drink entries from the standings. Both leaderboards refresh through the same live connection.
+
+No curse UI, automatic challenge draw, individual challenge timing enforcement or GPS proof is included. Teams physically draw their cards and report outcomes. A team with a pending challenge gets a popup when it tries to claim another bar or start another steal, linking directly to the missing outcome. A lost competing steal resolves automatically, so it does not leave the team blocked.
+
+## Updating an existing installation
+
+This release changes the database schema. Pause the current game before upgrading, then keep team submissions closed until the Worker and Pages frontend both use the new code.
+
+```sh
+npx wrangler@4.151.1 d1 migrations apply DB --remote --config worker/wrangler.jsonc
+npx wrangler@4.151.1 deploy --config worker/wrangler.jsonc
+```
+
+Then deploy the updated `public` directory using your existing Pages/Git deployment. The migration preserves existing teams, passcodes, sessions, claims, attempts, photo metadata and audit history as the first saved game. An old Setup game becomes a Draft; Live/Paused/Ended phases are preserved. Existing locks now count as two points. Historical elapsed time was never stored, so migrated games begin their clock history at the upgrade. Use a new saved draft for future events instead of resetting data.
 
 ## 9. Corrections during the game
 
@@ -231,30 +253,30 @@ No curse UI, automatic challenge draw, timing enforcement or GPS proof is includ
 - Change the owner.
 - **Claimed:** owner can submit a challenge outcome again.
 - **Failed/vetoed — open to steals:** owner keeps the point, challengers may attempt a steal.
-- **Locked:** protects ownership; choose the completed challenge.
+- **Locked:** protects ownership and makes the venue worth two points; choose the completed challenge.
 - **Undo claim:** removes ownership, voids all attempts at this venue and permits teams to retry. Use this when someone chose the wrong Google venue, then have the team claim the correct place.
 - Enter a reason before applying.
 
 Venue corrections supersede pending competing attempts. Correcting a failed attempt to vetoed (or vice versa), or changing a recorded challenge card without affecting ownership, is available on its **Feed** post. Removing photos is also available there to admins.
 
-**Adjust a score** sets a team's total manual offset; it does not add the entered value repeatedly. Example: entering `-1` means owned bars minus one; returning it to `0` removes the adjustment. A reason is required.
+**Adjust a score** sets a team's total manual offset; it does not add the entered value repeatedly. Example: entering `-1` means bar points (owned bars plus lock bonuses) minus one; returning it to `0` removes the adjustment. A reason is required.
 
-The recent history section shows the last 100 actions/corrections; the database retains the full audit table. Use **Admin → Reset Game** for a clean rehearsal: type `RESET` to clear gameplay and sign everyone out while keeping teams, passcodes, colors and the logo. The audit history remains. **Teams → Remove** can delete an unused team or retire a team with history; see the game management section in README.md.
+The recent history section shows the last 100 actions/corrections; the database retains the full audit table. There is no destructive reset button. For a clean rehearsal, create a separate saved game, or undo test claims before the real game (history remains).
 
 ## 10. Test before the event
 
 Use two or three team logins on separate devices/browser profiles:
 
-1. Admin starts the game. Team A finds a bar and submits a photo claim: A = 1.
-2. Team A completes and locks it: A remains 1; others cannot claim it.
+1. Enable the game and sign in Team A. Confirm the lobby permits viewing but blocks submissions. Start the timer separately. A finds a bar, checks the drinkers, and submits a photo claim: A = 1.
+2. Try claiming another bar before reporting: the popup must link to the missing outcome. Complete and lock the first bar: A = 2; others cannot claim it.
 3. Use a second venue. A claims then fails/vetoes: A owns it; it is open to steal.
 4. B starts a steal: A still has its point.
-5. B completes: A loses that venue's point and B gains one. Both scoreboards update.
+5. B completes: A loses that venue's point and B gains two. Team scores and drinkers' standings update live; earlier drinks remain counted.
 6. On another open venue, let B fail its steal. Confirm ownership stays with A and B cannot retry.
 7. Confirm camera and gallery selection on the actual iPhones/Androids in the group.
 8. Confirm the feed, challenge thumbnails, and logo work.
-9. Pause/end the game and confirm team submissions are rejected.
-10. Rehearse an admin correction and check the scores update.
+9. Pause/end the game and confirm team submissions are rejected and the clock freezes. Resume and confirm elapsed time is retained.
+10. Rehearse an admin correction and check scores update. Create another draft and verify separate teams/data and shared podium nicknames.
 
 The app uses live WebSockets plus a 20-second fallback refresh. Mobile browser suspension is normal: returning to the tab refreshes state. It must show a success message before a team treats a claim or lock as recorded. Slow/failed uploads do not reserve a venue. Google setup, live Cloudflare WebSockets, and real device camera behaviour need this account/device smoke test; they cannot be validated without your deployment and credentials.
 
