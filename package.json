@@ -1,1 +1,11 @@
-{"name":"battle-for-new-york","version":"1.0.0","private":true,"type":"module","scripts":{"test":"node --test tests/*.test.mjs","check":"node --check worker/index.js && node --check public/app.js && node --check public/_worker.js"}}
+{
+  "name": "battle-for-new-york",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check worker/index.js && node --check public/app.js && node --check public/roster.js && node --check public/_worker.js",
+    "test:browser": "node tests/browser-smoke.mjs"
+  }
+}
